@@ -1,0 +1,54 @@
+name: Build Unsigned macOS ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and package unsigned app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve package dependencies
+        run: xcodebuild -resolvePackageDependencies -project boringNotch.xcodeproj
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project boringNotch.xcodeproj \
+            -scheme boringNotch \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package .app as zip
+        run: |
+          APP_PATH="$(find build/Build/Products -type d -name 'boringNotch.app' | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "boringNotch.app not found"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" boringNotch-unsigned.zip
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: boringNotch-unsigned-app
+          path: boringNotch-unsigned.zip

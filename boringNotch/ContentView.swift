@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var superIntegration = SuperIntegrationsViewModel.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -58,6 +59,18 @@ struct ContentView: View {
         )
     }
 
+    private var isMusicIdle: Bool {
+        !musicManager.isPlaying && musicManager.isPlayerIdle
+    }
+
+    private var shouldShowSuperIdleTile: Bool {
+        !coordinator.expandingView.show
+            && vm.notchState == .closed
+            && isMusicIdle
+            && Defaults[.showSuperLiveActivityWhenIdle]
+            && !vm.hideOnClosed
+    }
+
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
@@ -70,8 +83,10 @@ struct ContentView: View {
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
         {
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+        } else if shouldShowSuperIdleTile {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if !coordinator.expandingView.show && vm.notchState == .closed
-            && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace]
+            && isMusicIdle && Defaults[.showNotHumanFace]
             && !vm.hideOnClosed
         {
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
@@ -212,6 +227,9 @@ struct ContentView: View {
         .background(dragDetector)
         .preferredColorScheme(.dark)
         .environmentObject(vm)
+        .task {
+            await superIntegration.refreshAll()
+        }
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
 
@@ -288,7 +306,9 @@ struct ContentView: View {
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
-                      } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
+                      } else if shouldShowSuperIdleTile {
+                          SuperIdleLiveActivity()
+                      } else if !coordinator.expandingView.show && vm.notchState == .closed && isMusicIdle && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
                           BoringFaceAnimation()
                        } else if vm.notchState == .open {
                            BoringHeader()
@@ -347,6 +367,12 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .superDashboard:
+                        if Defaults[.showSuperTab] {
+                            SuperDashboardView()
+                        } else {
+                            NotchHomeView(albumArtNamespace: albumArtNamespace)
+                        }
                     }
                 }
                 .transition(
@@ -482,6 +508,196 @@ struct ContentView: View {
             height: vm.effectiveClosedNotchHeight,
             alignment: .center
         )
+    }
+
+    @ViewBuilder
+    func SuperIdleLiveActivity() -> some View {
+        HStack {
+            ZStack {
+                RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+                    .fill(Color.black)
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.white)
+            }
+            .frame(
+                width: max(0, vm.effectiveClosedNotchHeight - 12),
+                height: max(0, vm.effectiveClosedNotchHeight - 12)
+            )
+
+            Rectangle()
+                .fill(.black)
+                .overlay(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 4) {
+                            Text("Super")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Text(superIntegration.codexSourceLabel)
+                                .font(.caption2)
+                                .foregroundStyle(.gray)
+                                .lineLimit(1)
+                        }
+                        superCompactProgress(
+                            label: "S",
+                            percent: superIntegration.codexSessionRemainingPercent,
+                            tint: .green
+                        )
+                        superCompactProgress(
+                            label: "W",
+                            percent: superIntegration.codexWeeklyRemainingPercent,
+                            tint: .blue
+                        )
+                        Text("Battery \(Int(batteryModel.levelBattery))% | AlDente \(superIntegration.alDenteChargeLimitLabel)")
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .foregroundStyle(.gray)
+                    }
+                    .padding(.horizontal, 10)
+                }
+                .frame(width: vm.closedNotchSize.width + -cornerRadiusInsets.closed.top)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+                    .fill(Color.black)
+                Text(superIntegration.alDenteChargeLimitLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(
+                width: max(0, vm.effectiveClosedNotchHeight - 12),
+                height: max(0, vm.effectiveClosedNotchHeight - 12)
+            )
+        }
+        .frame(
+            height: vm.effectiveClosedNotchHeight,
+            alignment: .center
+        )
+    }
+
+    @ViewBuilder
+    func SuperDashboardView() -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Super Dashboard")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                if superIntegration.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("CodexBar")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                superMetricRow(title: "Session", value: superIntegration.codexSessionRemainingLabel)
+                superMetricRow(title: "Weekly", value: superIntegration.codexWeeklyRemainingLabel)
+                superMetricRow(title: "Reset", value: superIntegration.codexSessionResetLabel)
+                superMetricRow(title: "Source", value: superIntegration.codexSourceLabel)
+                HStack(spacing: 8) {
+                    Button("Refresh") {
+                        Task {
+                            await superIntegration.refreshAll()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Open CodexBar") {
+                        superIntegration.openCodexBar()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!superIntegration.codexBarInstalled)
+                }
+            }
+            .padding(10)
+            .background(.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AlDente")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                superMetricRow(title: "Charge limit", value: superIntegration.alDenteChargeLimitLabel)
+                superMetricRow(
+                    title: "Status",
+                    value: superIntegration.alDenteRunning ? "Running" : "Not running"
+                )
+                HStack(spacing: 6) {
+                    ForEach([60, 70, 80, 100], id: \.self) { limit in
+                        Button("\(limit)%") {
+                            superIntegration.applyAlDenteChargeLimit(limit)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!superIntegration.alDenteQuickActionAvailable)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Button("Open AlDente") {
+                        superIntegration.openAlDente()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!superIntegration.alDenteInstalled)
+
+                    Button("Website") {
+                        superIntegration.openAlDenteWebsite()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(10)
+            .background(.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private func superMetricRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.gray)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private func superCompactProgress(label: String, percent: Double?, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.gray)
+                .frame(width: 10, alignment: .leading)
+
+            GeometryReader { geo in
+                let width = geo.size.width
+                let normalized = max(0, min(100, percent ?? 0))
+                let fillWidth = width * (normalized / 100)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.12))
+                    Capsule()
+                        .fill(tint.gradient)
+                        .frame(width: fillWidth)
+                }
+            }
+            .frame(height: 5)
+
+            Text(percent.map { "\(Int($0.rounded()))%" } ?? "--")
+                .font(.caption2)
+                .foregroundStyle(.gray)
+                .frame(width: 32, alignment: .trailing)
+        }
     }
 
     @ViewBuilder

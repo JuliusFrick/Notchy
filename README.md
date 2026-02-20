@@ -76,6 +76,17 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch --no-quarantine
 - Use the controls to manage your music like a rockstar.
 - Click the star in your menu bar to customize your notch to your heart's content.
 
+## Super App Integrations
+
+`Settings -> Super` adds a combined integration panel for:
+- `CodexBar`: reads local usage data through `codexbar usage --provider codex --format json --json-only`.
+- `AlDente`: companion integration with app detection, quick launch, and charge-limit status readout.
+- `AlDente automation`: optional auto-preset when switching between AC and battery power.
+- `Notch UI`: optional `Super` tab + idle live activity tile when no music is playing.
+
+> [!NOTE]
+> AlDente is integrated as a companion app (launch + status) and not embedded source code.
+
 ## 📋 Roadmap
 - [x] Playback live activity 🎧
 - [x] Calendar integration 📆
@@ -161,5 +172,3 @@ For a full list of licenses and attributions, please see the [Third-Party Licens
 
 - **SwiftUI**: For making us look like coding wizards.
 - **You**: For being awesome and checking out **boring.notch**!
-
-

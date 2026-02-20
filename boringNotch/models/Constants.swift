@@ -143,6 +143,11 @@ extension Defaults.Keys {
     static let showBatteryIndicator = Key<Bool>("showBatteryIndicator", default: true)
     static let showBatteryPercentage = Key<Bool>("showBatteryPercentage", default: true)
     static let showPowerStatusIcons = Key<Bool>("showPowerStatusIcons", default: true)
+    static let showSuperTab = Key<Bool>("showSuperTab", default: true)
+    static let showSuperLiveActivityWhenIdle = Key<Bool>("showSuperLiveActivityWhenIdle", default: true)
+    static let superAutoApplyChargePreset = Key<Bool>("superAutoApplyChargePreset", default: false)
+    static let superChargeLimitOnAC = Key<Int>("superChargeLimitOnAC", default: 80)
+    static let superChargeLimitOnBattery = Key<Int>("superChargeLimitOnBattery", default: 100)
     
     // MARK: Downloads
     static let enableDownloadListener = Key<Bool>("enableDownloadListener", default: true)

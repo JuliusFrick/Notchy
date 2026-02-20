@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import Combine
 import Defaults
 import EventKit
 import KeyboardShortcuts
@@ -54,6 +55,9 @@ struct SettingsView: View {
                 NavigationLink(value: "Shortcuts") {
                     Label("Shortcuts", systemImage: "keyboard")
                 }
+                NavigationLink(value: "Super") {
+                    Label("Super", systemImage: "sparkles")
+                }
                 // NavigationLink(value: "Extensions") {
                 //     Label("Extensions", systemImage: "puzzlepiece.extension")
                 // }
@@ -87,6 +91,8 @@ struct SettingsView: View {
                     Shelf()
                 case "Shortcuts":
                     Shortcuts()
+                case "Super":
+                    SuperIntegrationsSettings()
                 case "Extensions":
                     GeneralSettings()
                 case "Advanced":
@@ -380,6 +386,789 @@ struct Charge: View {
         .accentColor(.effectiveAccent)
         .navigationTitle("Battery")
     }
+}
+
+struct SuperIntegrationsSettings: View {
+    @ObservedObject private var integration = SuperIntegrationsViewModel.shared
+    @Default(.superAutoApplyChargePreset) private var superAutoApplyChargePreset
+    @Default(.superChargeLimitOnAC) private var superChargeLimitOnAC
+    @Default(.superChargeLimitOnBattery) private var superChargeLimitOnBattery
+
+    var body: some View {
+        Form {
+            Section {
+                Text(
+                    "Build your super app here: CodexBar telemetry is embedded directly, and AlDente is integrated as a companion for charge-limit workflows."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            } header: {
+                Text("Super app stack")
+            }
+
+            Section {
+                Defaults.Toggle(key: .showSuperTab) {
+                    Text("Show Super tab in notch")
+                }
+
+                Defaults.Toggle(key: .showSuperLiveActivityWhenIdle) {
+                    Text("Use idle notch space for Super live activity")
+                }
+            } header: {
+                Text("Notch integration")
+            } footer: {
+                Text("When no music is active, the closed notch shows a compact Super status tile.")
+            }
+
+            Section {
+                statusRow(
+                    title: "CodexBar app",
+                    isAvailable: integration.codexBarInstalled,
+                    availableText: "Installed",
+                    unavailableText: "Not found"
+                )
+                statusRow(
+                    title: "CodexBar CLI bridge",
+                    isAvailable: integration.codexBarCLIAvailable,
+                    availableText: "Connected",
+                    unavailableText: "Not available"
+                )
+
+                if let usage = integration.codexBarUsage {
+                    metricRow(title: "Session remaining", value: usage.sessionRemainingLabel)
+                    metricRow(title: "Session reset", value: usage.sessionResetLabel)
+                    metricRow(title: "Weekly remaining", value: usage.weeklyRemainingLabel)
+                    metricRow(title: "Weekly reset", value: usage.weeklyResetLabel)
+                    metricRow(title: "Source", value: usage.source)
+                    metricRow(title: "Updated", value: usage.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                } else if let error = integration.codexBarError, !error.isEmpty {
+                    Text(error)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No CodexBar usage data yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Button("Refresh") {
+                        Task {
+                            await integration.refreshAll()
+                        }
+                    }
+                    .disabled(integration.isRefreshing)
+
+                    Button("Open CodexBar") {
+                        integration.openCodexBar()
+                    }
+                    .disabled(!integration.codexBarInstalled)
+
+                    Spacer()
+
+                    if integration.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            } header: {
+                Text("CodexBar")
+            } footer: {
+                Text("Uses `codexbar usage --provider codex --format json --json-only` and parses local CLI output.")
+            }
+
+            Section {
+                statusRow(
+                    title: "AlDente app",
+                    isAvailable: integration.alDenteInstalled,
+                    availableText: "Installed",
+                    unavailableText: "Not found"
+                )
+                metricRow(
+                    title: "Configured charge limit",
+                    value: integration.alDenteChargeLimitLabel
+                )
+                metricRow(
+                    title: "App status",
+                    value: integration.alDenteRunning ? "Running" : "Not running"
+                )
+
+                if let domain = integration.alDentePreferenceDomain {
+                    metricRow(title: "Prefs domain", value: domain)
+                }
+
+                HStack {
+                    Button("Open AlDente") {
+                        integration.openAlDente()
+                    }
+                    .disabled(!integration.alDenteInstalled)
+
+                    Button("AlDente Website") {
+                        integration.openAlDenteWebsite()
+                    }
+                }
+
+                HStack {
+                    Text("Quick presets")
+                    Spacer()
+                    ForEach([60, 70, 80, 100], id: \.self) { limit in
+                        Button("\(limit)%") {
+                            integration.applyAlDenteChargeLimit(limit)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!integration.alDenteQuickActionAvailable)
+                    }
+                }
+            } header: {
+                Text("AlDente")
+            } footer: {
+                Text(
+                    "Companion mode: boring.notch reads AlDente status, supports quick preset writes to AlDente preferences, and launches AlDente."
+                )
+            }
+
+            Section {
+                Defaults.Toggle(key: .superAutoApplyChargePreset) {
+                    Text("Auto-apply presets on power changes")
+                }
+
+                if superAutoApplyChargePreset {
+                    Stepper(value: $superChargeLimitOnAC, in: 20...100, step: 5) {
+                        HStack {
+                            Text("When charger connected")
+                            Spacer()
+                            Text("\(superChargeLimitOnAC)%")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Stepper(value: $superChargeLimitOnBattery, in: 20...100, step: 5) {
+                        HStack {
+                            Text("When on battery")
+                            Spacer()
+                            Text("\(superChargeLimitOnBattery)%")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let description = integration.lastAutoPresetAction, !description.isEmpty {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("AlDente automation")
+            } footer: {
+                Text("Writes your configured preset to AlDente preferences on power source changes.")
+            }
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Super")
+        .task {
+            await integration.refreshAll()
+        }
+    }
+
+    @ViewBuilder
+    private func statusRow(
+        title: String,
+        isAvailable: Bool,
+        availableText: String,
+        unavailableText: String
+    ) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(isAvailable ? availableText : unavailableText)
+                .foregroundStyle(isAvailable ? .green : .secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func metricRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+@MainActor
+final class SuperIntegrationsViewModel: ObservableObject {
+    static let shared = SuperIntegrationsViewModel()
+
+    @Published private(set) var isRefreshing: Bool = false
+
+    @Published private(set) var codexBarInstalled: Bool = false
+    @Published private(set) var codexBarCLIAvailable: Bool = false
+    @Published private(set) var codexBarUsage: CodexBarUsageSummary?
+    @Published private(set) var codexBarError: String?
+
+    @Published private(set) var alDenteInstalled: Bool = false
+    @Published private(set) var alDenteRunning: Bool = false
+    @Published private(set) var alDenteChargeLimit: Int?
+    @Published private(set) var alDentePreferenceDomain: String?
+    @Published private(set) var lastAutoPresetAction: String?
+
+    var alDenteChargeLimitLabel: String {
+        guard let alDenteChargeLimit else { return "Unavailable" }
+        return "\(alDenteChargeLimit)%"
+    }
+
+    var codexSessionRemainingLabel: String {
+        codexBarUsage?.sessionRemainingLabel ?? "Unavailable"
+    }
+
+    var codexSessionRemainingPercent: Double? {
+        codexBarUsage?.sessionRemaining
+    }
+
+    var codexWeeklyRemainingLabel: String {
+        codexBarUsage?.weeklyRemainingLabel ?? "Unavailable"
+    }
+
+    var codexWeeklyRemainingPercent: Double? {
+        codexBarUsage?.weeklyRemaining
+    }
+
+    var codexSessionResetLabel: String {
+        codexBarUsage?.sessionResetLabel ?? "Unavailable"
+    }
+
+    var codexWeeklyResetLabel: String {
+        codexBarUsage?.weeklyResetLabel ?? "Unavailable"
+    }
+
+    var codexSourceLabel: String {
+        codexBarUsage?.source ?? "unknown"
+    }
+
+    var codexUsageAvailable: Bool {
+        codexBarUsage != nil
+    }
+
+    var codexActivitySummary: String {
+        guard let usage = codexBarUsage else {
+            return codexBarError ?? "Codex usage unavailable"
+        }
+        return "Codex \(usage.sessionRemainingLabel) | Week \(usage.weeklyRemainingLabel)"
+    }
+
+    var alDenteQuickActionAvailable: Bool {
+        alDenteInstalled || alDentePreferenceDomain != nil
+    }
+
+    private static let codexBarBundleIdentifiers = [
+        "com.steipete.codexbar",
+        "com.steipete.codexbar.debug",
+    ]
+    private static let alDenteBundleIdentifiers = [
+        "com.apphousekitchen.AlDente",
+        "com.davidwernhart.AlDente",
+    ]
+
+    private static let codexBarCLIPaths = [
+        "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
+        "/usr/local/bin/codexbar",
+        "/opt/homebrew/bin/codexbar",
+    ]
+
+    private static let alDentePreferenceDomains = [
+        "com.apphousekitchen.AlDente",
+        "com.davidwernhart.AlDente",
+    ]
+
+    private var autoRefreshTask: Task<Void, Never>?
+    private let batteryModel = BatteryStatusViewModel.shared
+    private var cancellables: Set<AnyCancellable> = []
+
+    private init() {
+        Task {
+            await self.refreshAll()
+        }
+        self.startAutoRefresh()
+        self.setupPowerSourceAutomation()
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
+        cancellables.removeAll()
+    }
+
+    func refreshAll() async {
+        guard !self.isRefreshing else { return }
+        self.isRefreshing = true
+        defer { self.isRefreshing = false }
+
+        self.codexBarInstalled = self.resolveApplicationURL(
+            bundleIdentifiers: Self.codexBarBundleIdentifiers,
+            appName: "CodexBar"
+        ) != nil
+        self.alDenteInstalled = self.resolveApplicationURL(
+            bundleIdentifiers: Self.alDenteBundleIdentifiers,
+            appName: "AlDente"
+        ) != nil
+        self.alDenteRunning = self.isApplicationRunning(bundleIdentifiers: Self.alDenteBundleIdentifiers)
+
+        let codexResult = await Self.fetchCodexBarUsage()
+        self.codexBarCLIAvailable = codexResult.cliAvailable
+        self.codexBarUsage = codexResult.usage
+        self.codexBarError = codexResult.error
+
+        let alDentePrefs = Self.readAlDenteChargeLimit()
+        self.alDenteChargeLimit = alDentePrefs.limit
+        self.alDentePreferenceDomain = alDentePrefs.domain
+    }
+
+    func openCodexBar() {
+        self.openApplication(
+            bundleIdentifiers: Self.codexBarBundleIdentifiers,
+            appName: "CodexBar"
+        )
+    }
+
+    func openAlDente() {
+        self.openApplication(
+            bundleIdentifiers: Self.alDenteBundleIdentifiers,
+            appName: "AlDente"
+        )
+    }
+
+    func openAlDenteWebsite() {
+        guard let url = URL(string: "https://apphousekitchen.com/aldente-overview/") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func applyAlDenteChargeLimit(_ limit: Int) {
+        self.applyAlDenteChargeLimit(
+            limit,
+            launchAppAfterWrite: true,
+            actionSource: "Manual"
+        )
+    }
+
+    private func startAutoRefresh(every interval: TimeInterval = 120) {
+        guard autoRefreshTask == nil else { return }
+        autoRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard let self, !Task.isCancelled else { return }
+                await self.refreshAll()
+            }
+        }
+    }
+
+    private func setupPowerSourceAutomation() {
+        batteryModel.$isPluggedIn
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] isPluggedIn in
+                guard let self else { return }
+                self.handlePowerSourceChange(isPluggedIn: isPluggedIn)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handlePowerSourceChange(isPluggedIn: Bool) {
+        guard Defaults[.superAutoApplyChargePreset] else { return }
+        guard self.alDenteQuickActionAvailable else { return }
+
+        let targetLimit = isPluggedIn
+            ? Defaults[.superChargeLimitOnAC]
+            : Defaults[.superChargeLimitOnBattery]
+
+        guard let normalized = Self.normalizedChargeLimit(from: targetLimit) else { return }
+        if self.alDenteChargeLimit == normalized { return }
+
+        let sourceLabel = isPluggedIn ? "Auto AC" : "Auto Battery"
+        self.applyAlDenteChargeLimit(
+            normalized,
+            launchAppAfterWrite: false,
+            actionSource: sourceLabel
+        )
+    }
+
+    private func applyAlDenteChargeLimit(
+        _ limit: Int,
+        launchAppAfterWrite: Bool,
+        actionSource: String
+    ) {
+        guard let normalizedLimit = Self.normalizedChargeLimit(from: limit) else { return }
+        let writtenDomain = Self.writeAlDenteChargeLimit(normalizedLimit, preferredDomain: alDentePreferenceDomain)
+        if let writtenDomain {
+            self.alDentePreferenceDomain = writtenDomain
+            self.alDenteChargeLimit = normalizedLimit
+            self.lastAutoPresetAction =
+                "\(actionSource): set \(normalizedLimit)% at \(Date().formatted(date: .omitted, time: .shortened))"
+        } else {
+            self.lastAutoPresetAction = "\(actionSource): failed to set \(normalizedLimit)%"
+        }
+
+        if launchAppAfterWrite && self.alDenteInstalled {
+            self.openAlDente()
+        }
+    }
+
+    private func openApplication(bundleIdentifiers: [String], appName: String) {
+        guard
+            let appURL = self.resolveApplicationURL(
+                bundleIdentifiers: bundleIdentifiers,
+                appName: appName
+            )
+        else { return }
+        NSWorkspace.shared.openApplication(
+            at: appURL,
+            configuration: NSWorkspace.OpenConfiguration()
+        ) { _, _ in
+        }
+    }
+
+    private func resolveApplicationURL(bundleIdentifiers: [String], appName: String) -> URL? {
+        for bundleIdentifier in bundleIdentifiers {
+            if let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+                return found
+            }
+        }
+
+        let fallbackPaths = [
+            "/Applications/\(appName).app",
+            "\(NSHomeDirectory())/Applications/\(appName).app",
+        ]
+
+        for path in fallbackPaths where FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        return nil
+    }
+
+    private func isApplicationRunning(bundleIdentifiers: [String]) -> Bool {
+        bundleIdentifiers.contains { bundleIdentifier in
+            !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
+        }
+    }
+
+    private static func readAlDenteChargeLimit() -> (limit: Int?, domain: String?) {
+        for domain in Self.alDentePreferenceDomains {
+            if let limit = Self.loadChargeLimit(forDomain: domain) {
+                return (limit, domain)
+            }
+        }
+        return (nil, nil)
+    }
+
+    private static func writeAlDenteChargeLimit(
+        _ value: Int,
+        preferredDomain: String?
+    ) -> String? {
+        let targetDomains: [String]
+        if let preferredDomain, !preferredDomain.isEmpty {
+            targetDomains = [preferredDomain] + Self.alDentePreferenceDomains.filter { $0 != preferredDomain }
+        } else {
+            targetDomains = Self.alDentePreferenceDomains
+        }
+
+        for domain in targetDomains {
+            var persistent = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
+            persistent["chargeVal"] = value
+            UserDefaults.standard.setPersistentDomain(persistent, forName: domain)
+            if let confirmed = Self.loadChargeLimit(forDomain: domain), confirmed == value {
+                return domain
+            }
+        }
+
+        return nil
+    }
+
+    private static func loadChargeLimit(forDomain domain: String) -> Int? {
+        if let object = UserDefaults(suiteName: domain)?.object(forKey: "chargeVal"),
+           let limit = Self.normalizedChargeLimit(from: object)
+        {
+            return limit
+        }
+
+        if let persistent = UserDefaults.standard.persistentDomain(forName: domain),
+           let object = persistent["chargeVal"],
+           let limit = Self.normalizedChargeLimit(from: object)
+        {
+            return limit
+        }
+
+        return nil
+    }
+
+    private static func normalizedChargeLimit(from object: Any) -> Int? {
+        let value: Int?
+        if let intValue = object as? Int {
+            value = intValue
+        } else if let numberValue = object as? NSNumber {
+            value = numberValue.intValue
+        } else if let stringValue = object as? String {
+            value = Int(stringValue)
+        } else {
+            value = nil
+        }
+
+        guard let resolved = value, (20...100).contains(resolved) else { return nil }
+        return resolved
+    }
+
+    private static func fetchCodexBarUsage() async -> CodexBarFetchResult {
+        let args = [
+            "usage",
+            "--provider", "codex",
+            "--format", "json",
+            "--json-only",
+            "--no-color",
+        ]
+
+        var invocations = Self.codexBarCLIPaths
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
+            .map { CommandInvocation(executable: $0, arguments: args) }
+        invocations.append(
+            CommandInvocation(
+                executable: "/usr/bin/env",
+                arguments: ["codexbar"] + args
+            )
+        )
+
+        var lastError = "Unable to fetch CodexBar usage."
+        for invocation in invocations {
+            let result = await Self.runProcess(
+                executable: invocation.executable,
+                arguments: invocation.arguments
+            )
+
+            if let launchError = result.launchError {
+                lastError = launchError
+                continue
+            }
+
+            switch Self.parseCodexBarUsage(result: result) {
+            case .success(let usage):
+                return CodexBarFetchResult(
+                    cliAvailable: true,
+                    usage: usage,
+                    error: nil
+                )
+            case .failure(let error):
+                lastError = error
+                continue
+            }
+        }
+
+        return CodexBarFetchResult(
+            cliAvailable: false,
+            usage: nil,
+            error: lastError
+        )
+    }
+
+    private static func parseCodexBarUsage(
+        result: CommandExecutionResult
+    ) -> Result<CodexBarUsageSummary, String> {
+        let trimmedOutput = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmedOutput.isEmpty {
+            if !trimmedError.isEmpty {
+                return .failure(trimmedError)
+            }
+            return .failure("CodexBar returned no output (exit \(result.exitCode)).")
+        }
+
+        let jsonPayload = Self.extractJSONArray(from: trimmedOutput) ?? trimmedOutput
+        guard let data = jsonPayload.data(using: .utf8) else {
+            return .failure("CodexBar output is not valid UTF-8.")
+        }
+
+        do {
+            let decoder = Self.makeCodexDecoder()
+            let payloads = try decoder.decode([CodexBarProviderPayload].self, from: data)
+            guard
+                let payload = payloads.first(where: { $0.provider.lowercased() == "codex" })
+                    ?? payloads.first
+            else {
+                return .failure("CodexBar returned an empty provider payload.")
+            }
+
+            if let providerError = payload.error?.message, !providerError.isEmpty {
+                return .failure(providerError)
+            }
+
+            guard let usage = payload.usage else {
+                return .failure("CodexBar did not provide usage data.")
+            }
+
+            let updatedAt = usage.updatedAt ?? Date()
+            return .success(
+                CodexBarUsageSummary(
+                    source: payload.source ?? "unknown",
+                    updatedAt: updatedAt,
+                    sessionRemaining: usage.primary?.remainingPercent,
+                    sessionResetsAt: usage.primary?.resetsAt,
+                    weeklyRemaining: usage.secondary?.remainingPercent,
+                    weeklyResetsAt: usage.secondary?.resetsAt
+                )
+            )
+        } catch {
+            let fallbackError = trimmedError.isEmpty ? error.localizedDescription : trimmedError
+            return .failure(fallbackError)
+        }
+    }
+
+    private static func extractJSONArray(from output: String) -> String? {
+        guard
+            let start = output.firstIndex(of: "["),
+            let end = output.lastIndex(of: "]"),
+            start <= end
+        else {
+            return nil
+        }
+        return String(output[start...end])
+    }
+
+    private static func makeCodexDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        let isoWithFractional = ISO8601DateFormatter()
+        isoWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoStandard = ISO8601DateFormatter()
+        isoStandard.formatOptions = [.withInternetDateTime]
+
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            if let date = isoWithFractional.date(from: raw) ?? isoStandard.date(from: raw) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO8601 date: \(raw)"
+            )
+        }
+        return decoder
+    }
+
+    private static func runProcess(
+        executable: String,
+        arguments: [String]
+    ) async -> CommandExecutionResult {
+        await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            do {
+                try process.run()
+            } catch {
+                return CommandExecutionResult(
+                    exitCode: -1,
+                    stdout: "",
+                    stderr: "",
+                    launchError: error.localizedDescription
+                )
+            }
+
+            process.waitUntilExit()
+            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+            return CommandExecutionResult(
+                exitCode: process.terminationStatus,
+                stdout: String(decoding: stdoutData, as: UTF8.self),
+                stderr: String(decoding: stderrData, as: UTF8.self),
+                launchError: nil
+            )
+        }.value
+    }
+}
+
+private struct CodexBarFetchResult {
+    let cliAvailable: Bool
+    let usage: CodexBarUsageSummary?
+    let error: String?
+}
+
+struct CodexBarUsageSummary {
+    let source: String
+    let updatedAt: Date
+    let sessionRemaining: Double?
+    let sessionResetsAt: Date?
+    let weeklyRemaining: Double?
+    let weeklyResetsAt: Date?
+
+    var sessionRemainingLabel: String {
+        Self.percentLabel(from: sessionRemaining)
+    }
+
+    var weeklyRemainingLabel: String {
+        Self.percentLabel(from: weeklyRemaining)
+    }
+
+    var sessionResetLabel: String {
+        Self.dateLabel(from: sessionResetsAt)
+    }
+
+    var weeklyResetLabel: String {
+        Self.dateLabel(from: weeklyResetsAt)
+    }
+
+    private static func percentLabel(from value: Double?) -> String {
+        guard let value else { return "Unavailable" }
+        return "\(Int(value.rounded()))%"
+    }
+
+    private static func dateLabel(from value: Date?) -> String {
+        guard let value else { return "Unavailable" }
+        return value.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct CommandInvocation {
+    let executable: String
+    let arguments: [String]
+}
+
+private struct CommandExecutionResult {
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+    let launchError: String?
+}
+
+private struct CodexBarProviderPayload: Decodable {
+    let provider: String
+    let source: String?
+    let usage: CodexBarUsagePayload?
+    let error: CodexBarErrorPayload?
+}
+
+private struct CodexBarUsagePayload: Decodable {
+    let primary: CodexBarRateWindowPayload?
+    let secondary: CodexBarRateWindowPayload?
+    let updatedAt: Date?
+}
+
+private struct CodexBarRateWindowPayload: Decodable {
+    let usedPercent: Double
+    let resetsAt: Date?
+
+    var remainingPercent: Double {
+        max(0, min(100, 100 - usedPercent))
+    }
+}
+
+private struct CodexBarErrorPayload: Decodable {
+    let message: String?
 }
 
 //struct Downloads: View {
