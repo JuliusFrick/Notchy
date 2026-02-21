@@ -956,7 +956,7 @@ final class SuperIntegrationsViewModel: ObservableObject {
                     error: nil
                 )
             case .failure(let error):
-                lastError = error
+                lastError = error.message
                 continue
             }
         }
@@ -968,22 +968,27 @@ final class SuperIntegrationsViewModel: ObservableObject {
         )
     }
 
+    private struct CodexBarError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     private static func parseCodexBarUsage(
         result: CommandExecutionResult
-    ) -> Result<CodexBarUsageSummary, String> {
+    ) -> Result<CodexBarUsageSummary, CodexBarError> {
         let trimmedOutput = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if trimmedOutput.isEmpty {
             if !trimmedError.isEmpty {
-                return .failure(trimmedError)
+                return .failure(CodexBarError(message: trimmedError))
             }
-            return .failure("CodexBar returned no output (exit \(result.exitCode)).")
+            return .failure(CodexBarError(message: "CodexBar returned no output (exit \(result.exitCode))."))
         }
 
         let jsonPayload = Self.extractJSONArray(from: trimmedOutput) ?? trimmedOutput
         guard let data = jsonPayload.data(using: .utf8) else {
-            return .failure("CodexBar output is not valid UTF-8.")
+            return .failure(CodexBarError(message: "CodexBar output is not valid UTF-8."))
         }
 
         do {
@@ -993,15 +998,15 @@ final class SuperIntegrationsViewModel: ObservableObject {
                 let payload = payloads.first(where: { $0.provider.lowercased() == "codex" })
                     ?? payloads.first
             else {
-                return .failure("CodexBar returned an empty provider payload.")
+                return .failure(CodexBarError(message: "CodexBar returned an empty provider payload."))
             }
 
             if let providerError = payload.error?.message, !providerError.isEmpty {
-                return .failure(providerError)
+                return .failure(CodexBarError(message: providerError))
             }
 
             guard let usage = payload.usage else {
-                return .failure("CodexBar did not provide usage data.")
+                return .failure(CodexBarError(message: "CodexBar did not provide usage data."))
             }
 
             let updatedAt = usage.updatedAt ?? Date()
@@ -1017,7 +1022,7 @@ final class SuperIntegrationsViewModel: ObservableObject {
             )
         } catch {
             let fallbackError = trimmedError.isEmpty ? error.localizedDescription : trimmedError
-            return .failure(fallbackError)
+            return .failure(CodexBarError(message: fallbackError))
         }
     }
 
