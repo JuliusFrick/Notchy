@@ -1,6 +1,12 @@
 name: "Manual Build"
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 env:
   projname: boringNotch
@@ -105,3 +111,9 @@ jobs:
         with:
           name: ${{ env.projname }}.app
           path: Release/${{ env.projname }}.app
+
+      - name: Create GitHub release with DMG
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Release/${{ env.projname }}.dmg
