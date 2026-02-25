@@ -24,6 +24,7 @@ struct ContentView: View {
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
     @ObservedObject var superIntegration = SuperIntegrationsViewModel.shared
+    @ObservedObject var sprechService = SprechVoxtralService.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -50,12 +51,16 @@ struct ContentView: View {
                 : cornerRadiusInsets.closed.top
     }
 
+    private var bottomCornerRadius: CGFloat {
+        ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
+            ? cornerRadiusInsets.opened.bottom
+            : cornerRadiusInsets.closed.bottom
+    }
+
     private var currentNotchShape: NotchShape {
         NotchShape(
             topCornerRadius: topCornerRadius,
-            bottomCornerRadius: ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
-                ? cornerRadiusInsets.opened.bottom
-                : cornerRadiusInsets.closed.bottom
+            bottomCornerRadius: bottomCornerRadius
         )
     }
 
@@ -71,6 +76,17 @@ struct ContentView: View {
             && !vm.hideOnClosed
     }
 
+    private var shouldShowMeetingCountdownBorder: Bool {
+        vm.notchState == .closed && Defaults[.showCalendar] && !vm.hideOnClosed
+    }
+
+    private var shouldShowSprechLiveActivity: Bool {
+        !coordinator.expandingView.show
+            && vm.notchState == .closed
+            && (sprechService.isRecording || sprechService.isTranscribing)
+            && !vm.hideOnClosed
+    }
+
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
@@ -78,6 +94,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if shouldShowSprechLiveActivity {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
@@ -122,6 +140,18 @@ struct ContentView: View {
                             .fill(.black)
                             .frame(height: 1)
                             .padding(.horizontal, topCornerRadius)
+                    }
+                    .overlay {
+                        if shouldShowMeetingCountdownBorder {
+                            NextMeetingProgressBorder(
+                                topCornerRadius: topCornerRadius,
+                                bottomCornerRadius: bottomCornerRadius
+                            )
+                        }
+                        
+                        if Defaults[.showCalendar] && vm.notchState == .closed && !vm.hideOnClosed {
+                            NightTimelineBorder()
+                        }
                     }
                     .shadow(
                         color: ((vm.notchState == .open || isHovering) && Defaults[.enableShadow])
@@ -300,6 +330,8 @@ struct ContentView: View {
                             .frame(width: 76, alignment: .trailing)
                         }
                         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+                      } else if shouldShowSprechLiveActivity {
+                          SprechLiveActivity()
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
@@ -365,11 +397,23 @@ struct ContentView: View {
                     switch coordinator.currentView {
                     case .home:
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
+                    case .calendar:
+                        if Defaults[.showCalendar] {
+                            NotchCalendarView()
+                        } else {
+                            NotchHomeView(albumArtNamespace: albumArtNamespace)
+                        }
                     case .shelf:
                         ShelfView()
                     case .superDashboard:
                         if Defaults[.showSuperTab] {
                             SuperDashboardView()
+                        } else {
+                            NotchHomeView(albumArtNamespace: albumArtNamespace)
+                        }
+                    case .sprech:
+                        if Defaults[.showSprechTab] {
+                            SprechDashboardView()
                         } else {
                             NotchHomeView(albumArtNamespace: albumArtNamespace)
                         }
@@ -511,6 +555,71 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    func SprechLiveActivity() -> some View {
+        HStack {
+            ZStack {
+                RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+                    .fill(Color.black)
+                Image(systemName: sprechService.isRecording ? "mic.fill" : "waveform.badge.magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(
+                width: max(0, vm.effectiveClosedNotchHeight - 12),
+                height: max(0, vm.effectiveClosedNotchHeight - 12)
+            )
+
+            Rectangle()
+                .fill(.black)
+                .overlay(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Sprech")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                        if sprechService.isRecording {
+                            Text("Recording \(Int(sprechService.recordingDuration))s")
+                                .font(.caption2)
+                                .foregroundStyle(.gray)
+                        } else {
+                            Text("Transcribing with Qwen3-ASR")
+                                .font(.caption2)
+                                .foregroundStyle(.gray)
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                }
+                .frame(width: vm.closedNotchSize.width + -cornerRadiusInsets.closed.top)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
+                    .fill(Color.black)
+                if sprechService.isRecording {
+                    Rectangle()
+                        .fill(Color.white.gradient)
+                        .frame(width: 50, alignment: .center)
+                        .mask {
+                            AudioSpectrumView(isPlaying: .constant(true))
+                                .frame(width: 16, height: 12)
+                        }
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.gray)
+                }
+            }
+            .frame(
+                width: max(0, vm.effectiveClosedNotchHeight - 12),
+                height: max(0, vm.effectiveClosedNotchHeight - 12)
+            )
+        }
+        .frame(
+            height: vm.effectiveClosedNotchHeight,
+            alignment: .center
+        )
+    }
+
+    @ViewBuilder
     func SuperIdleLiveActivity() -> some View {
         HStack {
             ZStack {
@@ -547,7 +656,7 @@ struct ContentView: View {
                             percent: superIntegration.codexWeeklyRemainingPercent,
                             tint: .blue
                         )
-                        Text("Battery \(Int(batteryModel.levelBattery))% | AlDente \(superIntegration.alDenteChargeLimitLabel)")
+                        Text("Battery \(Int(batteryModel.levelBattery))% | AlDente \(superAlDenteInlineLabel)")
                             .font(.caption2)
                             .lineLimit(1)
                             .foregroundStyle(.gray)
@@ -559,11 +668,17 @@ struct ContentView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: MusicPlayerImageSizes.cornerRadiusInset.closed)
                     .fill(Color.black)
-                Text(superIntegration.alDenteChargeLimitLabel)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                VStack(spacing: 1) {
+                    Image(systemName: "battery.100.bolt")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.green)
+                    Text(superAlDenteBadgeLabel)
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .padding(.horizontal, 2)
             }
             .frame(
                 width: max(0, vm.effectiveClosedNotchHeight - 12),
@@ -574,6 +689,20 @@ struct ContentView: View {
             height: vm.effectiveClosedNotchHeight,
             alignment: .center
         )
+    }
+
+    private var superAlDenteInlineLabel: String {
+        if let limit = superIntegration.alDenteChargeLimit {
+            return "\(limit)%"
+        }
+        return superIntegration.alDenteInstalled ? "Connected" : "Unavailable"
+    }
+
+    private var superAlDenteBadgeLabel: String {
+        if let limit = superIntegration.alDenteChargeLimit {
+            return "\(limit)%"
+        }
+        return superIntegration.alDenteInstalled ? "APP" : "--"
     }
 
     @ViewBuilder
@@ -651,6 +780,136 @@ struct ContentView: View {
             .padding(10)
             .background(.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sprech + Transcription")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                superMetricRow(
+                    title: "Recording",
+                    value: sprechService.isRecording
+                        ? "\(Int(sprechService.recordingDuration))s"
+                        : "Idle"
+                )
+                superMetricRow(
+                    title: "Status",
+                    value: sprechService.isTranscribing
+                        ? "Transcribing..."
+                        : (sprechService.lastError?.isEmpty == false ? "Error" : "Ready")
+                )
+                if !sprechService.lastTranscription.isEmpty {
+                    Text(sprechService.lastTranscription)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                if let error = sprechService.lastError, !error.isEmpty {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Button(sprechService.isRecording ? "Stop" : "Record") {
+                        Task { @MainActor in
+                            if sprechService.isRecording {
+                                sprechService.stopRecording()
+                            } else {
+                                await sprechService.startRecording()
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(sprechService.isTranscribing)
+
+                    Button("Copy") {
+                        sprechService.copyLatestTranscriptionToClipboard()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(sprechService.lastTranscription.isEmpty)
+                }
+            }
+            .padding(10)
+            .background(.black.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    func SprechDashboardView() -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Sprech")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                if sprechService.isTranscribing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button(sprechService.isRecording ? "Stop Recording" : "Start Recording") {
+                    Task { @MainActor in
+                        if sprechService.isRecording {
+                            sprechService.stopRecording()
+                        } else {
+                            await sprechService.startRecording()
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(sprechService.isTranscribing)
+
+                Button("Copy Result") {
+                    sprechService.copyLatestTranscriptionToClipboard()
+                }
+                .buttonStyle(.bordered)
+                .disabled(sprechService.lastTranscription.isEmpty)
+            }
+
+            if sprechService.isRecording {
+                Text("Recording... \(Int(sprechService.recordingDuration))s")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if sprechService.isTranscribing {
+                Text(
+                    sprechService.isLocalEngine
+                        ? "Transcribing with local AI..."
+                        : "Transcribing with Voxtral..."
+                )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = sprechService.lastError, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+            }
+
+            if !sprechService.lastTranscription.isEmpty {
+                ScrollView {
+                    Text(sprechService.lastTranscription)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 120)
+                .padding(8)
+                .background(.black.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                Text("No transcription yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 10)

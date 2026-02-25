@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import AppKit
 import Combine
 import Defaults
 import EventKit
@@ -390,15 +391,22 @@ struct Charge: View {
 
 struct SuperIntegrationsSettings: View {
     @ObservedObject private var integration = SuperIntegrationsViewModel.shared
+    @ObservedObject private var sprechService = SprechVoxtralService.shared
     @Default(.superAutoApplyChargePreset) private var superAutoApplyChargePreset
     @Default(.superChargeLimitOnAC) private var superChargeLimitOnAC
     @Default(.superChargeLimitOnBattery) private var superChargeLimitOnBattery
+    @Default(.sprechTranscriptionEngine) private var sprechTranscriptionEngine
+    @Default(.sprechLocalEndpoint) private var sprechLocalEndpoint
+    @Default(.sprechLocalModel) private var sprechLocalModel
+    @Default(.voxtralAPIKey) private var voxtralAPIKey
+    @Default(.voxtralModel) private var voxtralModel
+    @Default(.voxtralLanguage) private var voxtralLanguage
 
     var body: some View {
         Form {
             Section {
                 Text(
-                    "Build your super app here: CodexBar telemetry is embedded directly, and AlDente is integrated as a companion for charge-limit workflows."
+                    "Build your super app here: CodexBar telemetry is embedded directly, AlDente is integrated for charge-limit workflows, and Sprech can be controlled from the notch with local or Voxtral transcription."
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -414,6 +422,10 @@ struct SuperIntegrationsSettings: View {
                 Defaults.Toggle(key: .showSuperLiveActivityWhenIdle) {
                     Text("Use idle notch space for Super live activity")
                 }
+
+                Defaults.Toggle(key: .showSprechTab) {
+                    Text("Show Sprech tab in notch")
+                }
             } header: {
                 Text("Notch integration")
             } footer: {
@@ -428,7 +440,7 @@ struct SuperIntegrationsSettings: View {
                     unavailableText: "Not found"
                 )
                 statusRow(
-                    title: "CodexBar CLI bridge",
+                    title: "Usage data bridge",
                     isAvailable: integration.codexBarCLIAvailable,
                     availableText: "Connected",
                     unavailableText: "Not available"
@@ -446,7 +458,7 @@ struct SuperIntegrationsSettings: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("No CodexBar usage data yet.")
+                    Text("No Codex usage data yet.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -474,7 +486,7 @@ struct SuperIntegrationsSettings: View {
             } header: {
                 Text("CodexBar")
             } footer: {
-                Text("Uses `codexbar usage --provider codex --format json --json-only` and parses local CLI output.")
+                Text("Uses `codexbar usage --provider codex --format json --json-only`; falls back to local Codex session logs.")
             }
 
             Section {
@@ -525,6 +537,136 @@ struct SuperIntegrationsSettings: View {
                 Text(
                     "Companion mode: boring.notch reads AlDente status, supports quick preset writes to AlDente preferences, and launches AlDente."
                 )
+            }
+
+            Section {
+                statusRow(
+                    title: "Sprech app",
+                    isAvailable: integration.sprechInstalled,
+                    availableText: "Installed",
+                    unavailableText: "Not found"
+                )
+                metricRow(
+                    title: "App status",
+                    value: integration.sprechRunning ? "Running" : "Not running"
+                )
+
+                HStack {
+                    Button("Open Sprech") {
+                        integration.openSprech()
+                    }
+                    .disabled(!integration.sprechInstalled)
+
+                    Button("Sprech Repo") {
+                        integration.openSprechRepository()
+                    }
+                }
+            } header: {
+                Text("Sprech")
+            } footer: {
+                Text("Companion mode: open and monitor the external Sprech app directly from boring.notch.")
+            }
+
+            Section {
+                Picker("Engine", selection: $sprechTranscriptionEngine) {
+                    Text("Local AI (MLX Audio)").tag("localMLXAudio")
+                    Text("Voxtral Cloud API").tag("voxtralAPI")
+                }
+
+                if sprechTranscriptionEngine == "localMLXAudio" {
+                    TextField("Local API endpoint", text: $sprechLocalEndpoint)
+                    TextField("Local model", text: $sprechLocalModel)
+                    HStack {
+                        Text("Quick models")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Qwen3-ASR") {
+                            sprechLocalModel = "mlx-community/Qwen3-ASR-1.7B-8bit"
+                        }
+                        Button("Voxtral 4B") {
+                            sprechLocalModel = "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit"
+                        }
+                        Button("Voxtral 3B") {
+                            sprechLocalModel = "mlx-community/Voxtral-Mini-3B-2507-bf16"
+                        }
+                    }
+                    Text(
+                        "Tip: run `mlx_audio.server --host 127.0.0.1 --port 8000` with Qwen3-ASR (default) or Voxtral."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    SecureField("Voxtral API key", text: $voxtralAPIKey)
+                    TextField("Voxtral model", text: $voxtralModel)
+                }
+
+                Picker("Language", selection: $voxtralLanguage) {
+                    Text("Auto").tag("auto")
+                    Text("German").tag("de")
+                    Text("English").tag("en")
+                    Text("French").tag("fr")
+                    Text("Spanish").tag("es")
+                    Text("Italian").tag("it")
+                }
+
+                Defaults.Toggle(key: .voxtralAutoCopy) {
+                    Text("Auto-copy transcription result")
+                }
+
+                metricRow(
+                    title: "Recording",
+                    value: sprechService.isRecording
+                        ? "\(Int(sprechService.recordingDuration))s"
+                        : "Idle"
+                )
+
+                HStack {
+                    Button(sprechService.isRecording ? "Stop recording" : "Start recording") {
+                        Task { @MainActor in
+                            if sprechService.isRecording {
+                                sprechService.stopRecording()
+                            } else {
+                                await sprechService.startRecording()
+                            }
+                        }
+                    }
+                    .disabled(sprechService.isTranscribing)
+
+                    Button("Copy result") {
+                        sprechService.copyLatestTranscriptionToClipboard()
+                    }
+                    .disabled(sprechService.lastTranscription.isEmpty)
+                }
+
+                if sprechService.isTranscribing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(
+                            sprechService.isLocalEngine
+                                ? "Transcribing with local AI..."
+                                : "Transcribing with Voxtral..."
+                        )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let error = sprechService.lastError, !error.isEmpty {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                if !sprechService.lastTranscription.isEmpty {
+                    Text(sprechService.lastTranscription)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("Transcription")
+            } footer: {
+                Text("Local AI mode expects an OpenAI-compatible transcription endpoint from MLX Audio (Voxtral/Qwen) running on your Mac.")
             }
 
             Section {
@@ -613,6 +755,8 @@ final class SuperIntegrationsViewModel: ObservableObject {
     @Published private(set) var alDenteChargeLimit: Int?
     @Published private(set) var alDentePreferenceDomain: String?
     @Published private(set) var lastAutoPresetAction: String?
+    @Published private(set) var sprechInstalled: Bool = false
+    @Published private(set) var sprechRunning: Bool = false
 
     var alDenteChargeLimitLabel: String {
         guard let alDenteChargeLimit else { return "Unavailable" }
@@ -668,7 +812,16 @@ final class SuperIntegrationsViewModel: ObservableObject {
     ]
     private static let alDenteBundleIdentifiers = [
         "com.apphousekitchen.AlDente",
+        "com.apphousekitchen.aldente",
+        "com.apphousekitchen.AlDentePro",
         "com.davidwernhart.AlDente",
+        "com.davidwernhart.aldente",
+    ]
+    private static let sprechBundleIdentifiers = [
+        "com.juliusfrick.Sprech",
+        "com.sprech.app",
+        "com.sprech.Sprech",
+        "com.yourcompany.Sprech",
     ]
 
     private static let codexBarCLIPaths = [
@@ -677,9 +830,19 @@ final class SuperIntegrationsViewModel: ObservableObject {
         "/opt/homebrew/bin/codexbar",
     ]
 
-    private static let alDentePreferenceDomains = [
+    private static let alDenteKnownPreferenceDomains = [
         "com.apphousekitchen.AlDente",
+        "com.apphousekitchen.aldente",
+        "com.apphousekitchen.AlDentePro",
         "com.davidwernhart.AlDente",
+        "com.davidwernhart.aldente",
+    ]
+    private static let alDenteChargeLimitKeys = [
+        "chargeVal",
+        "chargeLimit",
+        "charge_limit",
+        "chargeValue",
+        "maxCharge",
     ]
 
     private var autoRefreshTask: Task<Void, Never>?
@@ -712,7 +875,12 @@ final class SuperIntegrationsViewModel: ObservableObject {
             bundleIdentifiers: Self.alDenteBundleIdentifiers,
             appName: "AlDente"
         ) != nil
+        self.sprechInstalled = self.resolveApplicationURL(
+            bundleIdentifiers: Self.sprechBundleIdentifiers,
+            appName: "Sprech"
+        ) != nil
         self.alDenteRunning = self.isApplicationRunning(bundleIdentifiers: Self.alDenteBundleIdentifiers)
+        self.sprechRunning = self.isApplicationRunning(bundleIdentifiers: Self.sprechBundleIdentifiers)
 
         let codexResult = await Self.fetchCodexBarUsage()
         self.codexBarCLIAvailable = codexResult.cliAvailable
@@ -738,8 +906,20 @@ final class SuperIntegrationsViewModel: ObservableObject {
         )
     }
 
+    func openSprech() {
+        self.openApplication(
+            bundleIdentifiers: Self.sprechBundleIdentifiers,
+            appName: "Sprech"
+        )
+    }
+
     func openAlDenteWebsite() {
         guard let url = URL(string: "https://apphousekitchen.com/aldente-overview/") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openSprechRepository() {
+        guard let url = URL(string: "https://github.com/JuliusFrick/Sprech") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -834,10 +1014,16 @@ final class SuperIntegrationsViewModel: ObservableObject {
             }
         }
 
-        let fallbackPaths = [
+        var fallbackPaths = [
             "/Applications/\(appName).app",
             "\(NSHomeDirectory())/Applications/\(appName).app",
         ]
+        if appName.caseInsensitiveCompare("AlDente") == .orderedSame {
+            fallbackPaths.append(contentsOf: [
+                "/Applications/AlDente Pro.app",
+                "\(NSHomeDirectory())/Applications/AlDente Pro.app",
+            ])
+        }
 
         for path in fallbackPaths where FileManager.default.fileExists(atPath: path) {
             return URL(fileURLWithPath: path)
@@ -853,7 +1039,7 @@ final class SuperIntegrationsViewModel: ObservableObject {
     }
 
     private static func readAlDenteChargeLimit() -> (limit: Int?, domain: String?) {
-        for domain in Self.alDentePreferenceDomains {
+        for domain in Self.resolvedAlDentePreferenceDomains() {
             if let limit = Self.loadChargeLimit(forDomain: domain) {
                 return (limit, domain)
             }
@@ -865,17 +1051,18 @@ final class SuperIntegrationsViewModel: ObservableObject {
         _ value: Int,
         preferredDomain: String?
     ) -> String? {
-        let targetDomains: [String]
-        if let preferredDomain, !preferredDomain.isEmpty {
-            targetDomains = [preferredDomain] + Self.alDentePreferenceDomains.filter { $0 != preferredDomain }
-        } else {
-            targetDomains = Self.alDentePreferenceDomains
-        }
+        let targetDomains = Self.resolvedAlDentePreferenceDomains(preferredDomain: preferredDomain)
 
         for domain in targetDomains {
+            Self.synchronizePreferences(forDomain: domain)
             var persistent = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
-            persistent["chargeVal"] = value
+            let keysToWrite = Self.detectedChargeLimitKeys(in: persistent)
+            let writeTargets = keysToWrite.isEmpty ? Self.alDenteChargeLimitKeys : keysToWrite
+            for key in writeTargets {
+                persistent[key] = value
+            }
             UserDefaults.standard.setPersistentDomain(persistent, forName: domain)
+            Self.synchronizePreferences(forDomain: domain)
             if let confirmed = Self.loadChargeLimit(forDomain: domain), confirmed == value {
                 return domain
             }
@@ -885,20 +1072,85 @@ final class SuperIntegrationsViewModel: ObservableObject {
     }
 
     private static func loadChargeLimit(forDomain domain: String) -> Int? {
-        if let object = UserDefaults(suiteName: domain)?.object(forKey: "chargeVal"),
-           let limit = Self.normalizedChargeLimit(from: object)
-        {
-            return limit
+        Self.synchronizePreferences(forDomain: domain)
+
+        if let suiteDefaults = UserDefaults(suiteName: domain) {
+            for key in Self.alDenteChargeLimitKeys {
+                if let object = suiteDefaults.object(forKey: key),
+                   let limit = Self.normalizedChargeLimit(from: object)
+                {
+                    return limit
+                }
+            }
         }
 
-        if let persistent = UserDefaults.standard.persistentDomain(forName: domain),
-           let object = persistent["chargeVal"],
-           let limit = Self.normalizedChargeLimit(from: object)
-        {
-            return limit
+        if let persistent = UserDefaults.standard.persistentDomain(forName: domain) {
+            for key in Self.alDenteChargeLimitKeys {
+                if let object = persistent[key],
+                   let limit = Self.normalizedChargeLimit(from: object)
+                {
+                    return limit
+                }
+            }
+
+            for value in persistent.values {
+                guard let nested = value as? [String: Any] else { continue }
+                for key in Self.alDenteChargeLimitKeys {
+                    if let object = nested[key],
+                       let limit = Self.normalizedChargeLimit(from: object)
+                    {
+                        return limit
+                    }
+                }
+            }
         }
 
         return nil
+    }
+
+    private static func resolvedAlDentePreferenceDomains(preferredDomain: String? = nil) -> [String] {
+        var resolved: [String] = []
+        var seen: Set<String> = []
+
+        func append(_ domain: String?) {
+            guard let domain else { return }
+            let trimmed = domain.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let dedupeKey = trimmed.lowercased()
+            guard !seen.contains(dedupeKey) else { return }
+            seen.insert(dedupeKey)
+            resolved.append(trimmed)
+        }
+
+        append(preferredDomain)
+        Self.alDenteKnownPreferenceDomains.forEach(append)
+
+        let preferencesDirectory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Preferences", isDirectory: true)
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: preferencesDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for fileURL in files where fileURL.pathExtension == "plist" {
+                let domain = fileURL.deletingPathExtension().lastPathComponent
+                if domain.localizedCaseInsensitiveContains("aldente") {
+                    append(domain)
+                }
+            }
+        }
+
+        return resolved
+    }
+
+    private static func detectedChargeLimitKeys(in persistentDomain: [String: Any]) -> [String] {
+        Self.alDenteChargeLimitKeys.filter { key in
+            persistentDomain.keys.contains { $0.caseInsensitiveCompare(key) == .orderedSame }
+        }
+    }
+
+    private static func synchronizePreferences(forDomain domain: String) {
+        CFPreferencesAppSynchronize(domain as CFString)
     }
 
     private static func normalizedChargeLimit(from object: Any) -> Int? {
@@ -1094,6 +1346,459 @@ final class SuperIntegrationsViewModel: ObservableObject {
                 launchError: nil
             )
         }.value
+    }
+}
+
+@MainActor
+final class SprechVoxtralService: NSObject, ObservableObject {
+    static let shared = SprechVoxtralService()
+    private static let qwenDefaultModel = "mlx-community/Qwen3-ASR-1.7B-8bit"
+    private static let legacyVoxtralDefaultModel = "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit"
+
+    @Published private(set) var isRecording: Bool = false
+    @Published private(set) var isTranscribing: Bool = false
+    @Published private(set) var recordingDuration: TimeInterval = 0
+    @Published private(set) var hasMicrophonePermission: Bool = false
+    @Published private(set) var lastTranscription: String = ""
+    @Published private(set) var lastDetectedLanguage: String?
+    @Published private(set) var lastError: String?
+
+    private var recorder: AVAudioRecorder?
+    private var recordingURL: URL?
+    private var durationTimer: Timer?
+
+    private override init() {
+        super.init()
+        migrateDefaultModelToQwenIfNeeded()
+        updateMicrophonePermissionState()
+    }
+
+    func startRecording() async {
+        guard !isRecording else { return }
+        guard !isTranscribing else { return }
+
+        if !isLocalEngine {
+            let apiKey = Defaults[.voxtralAPIKey].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !apiKey.isEmpty else {
+                self.lastError = "Missing Voxtral API key. Add it in Settings > Super > Transcription."
+                return
+            }
+        }
+
+        let permissionGranted = await ensureMicrophonePermission()
+        guard permissionGranted else {
+            self.lastError = "Microphone access denied. Allow microphone permission in System Settings."
+            return
+        }
+
+        do {
+            let outputURL = try makeRecordingURL()
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64_000,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            ]
+            let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+            recorder.prepareToRecord()
+            let started = recorder.record()
+            guard started else {
+                throw SprechVoxtralError.recordingFailed("Could not start recorder.")
+            }
+
+            self.recorder = recorder
+            self.recordingURL = outputURL
+            self.recordingDuration = 0
+            self.lastError = nil
+            self.isRecording = true
+            self.startDurationTimer()
+        } catch {
+            self.lastError = error.localizedDescription
+            self.isRecording = false
+            self.stopDurationTimer()
+        }
+    }
+
+    func stopRecording() {
+        guard isRecording else { return }
+
+        recorder?.stop()
+        recorder = nil
+        isRecording = false
+        stopDurationTimer()
+
+        guard let audioURL = recordingURL else { return }
+        recordingURL = nil
+
+        Task { @MainActor in
+            await self.transcribeAudio(at: audioURL)
+        }
+    }
+
+    func toggleRecording() async {
+        if isRecording {
+            stopRecording()
+        } else {
+            await startRecording()
+        }
+    }
+
+    func copyLatestTranscriptionToClipboard() {
+        guard !lastTranscription.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastTranscription, forType: .string)
+    }
+
+    var isLocalEngine: Bool {
+        currentEngine == .localMLXAudio
+    }
+
+    private func updateMicrophonePermissionState() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            hasMicrophonePermission = true
+        case .notDetermined, .denied, .restricted:
+            hasMicrophonePermission = false
+        @unknown default:
+            hasMicrophonePermission = false
+        }
+    }
+
+    private func migrateDefaultModelToQwenIfNeeded() {
+        guard !Defaults[.didMigrateSprechQwenModel] else { return }
+        defer { Defaults[.didMigrateSprechQwenModel] = true }
+
+        let currentModel = Defaults[.sprechLocalModel].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard currentModel.isEmpty || currentModel == Self.legacyVoxtralDefaultModel else { return }
+        Defaults[.sprechLocalModel] = Self.qwenDefaultModel
+    }
+
+    private func ensureMicrophonePermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            hasMicrophonePermission = true
+            return true
+        case .notDetermined:
+            let granted = await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+            hasMicrophonePermission = granted
+            return granted
+        case .denied, .restricted:
+            hasMicrophonePermission = false
+            return false
+        @unknown default:
+            hasMicrophonePermission = false
+            return false
+        }
+    }
+
+    private func makeRecordingURL() throws -> URL {
+        let temp = FileManager.default.temporaryDirectory
+        let outputURL = temp
+            .appendingPathComponent("notchy-voxtral-\(UUID().uuidString)")
+            .appendingPathExtension("m4a")
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try FileManager.default.removeItem(at: outputURL)
+        }
+        return outputURL
+    }
+
+    private func startDurationTimer() {
+        stopDurationTimer()
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.recordingDuration += 0.1
+            }
+        }
+    }
+
+    private func stopDurationTimer() {
+        durationTimer?.invalidate()
+        durationTimer = nil
+    }
+
+    private func transcribeAudio(at audioURL: URL) async {
+        guard !isTranscribing else { return }
+
+        isTranscribing = true
+        defer {
+            isTranscribing = false
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        do {
+            let result: TranscriptionPayload
+            if isLocalEngine {
+                result = try await requestLocalTranscription(audioURL: audioURL)
+            } else {
+                result = try await requestVoxtralTranscription(audioURL: audioURL)
+            }
+            let cleaned = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else {
+                throw SprechVoxtralError.emptyTranscription
+            }
+
+            lastTranscription = cleaned
+            lastDetectedLanguage = result.language
+            lastError = nil
+
+            if Defaults[.voxtralAutoCopy] {
+                copyLatestTranscriptionToClipboard()
+            }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private func requestLocalTranscription(audioURL: URL) async throws -> TranscriptionPayload {
+        guard let endpoint = localTranscriptionEndpointURL() else {
+            throw SprechVoxtralError.invalidEndpoint
+        }
+
+        let modelInput = Defaults[.sprechLocalModel].trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = modelInput.isEmpty ? Self.qwenDefaultModel : modelInput
+
+        let language = selectedLanguageCode()
+        let fileData = try Data(contentsOf: audioURL)
+        let boundary = "Boundary-\(UUID().uuidString)"
+
+        var body = Data()
+        body.appendMultipartField(name: "model", value: model, boundary: boundary)
+        if language != "auto" {
+            body.appendMultipartField(name: "language", value: language, boundary: boundary)
+        }
+        body.appendMultipartField(name: "response_format", value: "json", boundary: boundary)
+        body.appendMultipartFileField(
+            name: "file",
+            fileName: "recording.m4a",
+            mimeType: "audio/mp4",
+            fileData: fileData,
+            boundary: boundary
+        )
+        body.appendString("--\(boundary)--\r\n")
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw SprechVoxtralError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = Self.extractVoxtralError(from: data)
+                throw SprechVoxtralError.apiError(
+                    message
+                        ?? "Local AI server returned status \(httpResponse.statusCode)."
+                )
+            }
+
+            return try JSONDecoder().decode(TranscriptionPayload.self, from: data)
+        } catch let error as SprechVoxtralError {
+            throw error
+        } catch {
+            throw SprechVoxtralError.localServerUnavailable(error.localizedDescription)
+        }
+    }
+
+    private func requestVoxtralTranscription(audioURL: URL) async throws -> TranscriptionPayload {
+        let apiKey = Defaults[.voxtralAPIKey].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            throw SprechVoxtralError.missingAPIKey
+        }
+
+        guard let endpoint = URL(string: "https://api.mistral.ai/v1/audio/transcriptions") else {
+            throw SprechVoxtralError.invalidEndpoint
+        }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        let modelInput = Defaults[.voxtralModel].trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = modelInput.isEmpty ? "voxtral-mini-latest" : modelInput
+        let language = Defaults[.voxtralLanguage]
+
+        let fileData = try Data(contentsOf: audioURL)
+        var body = Data()
+        body.appendMultipartField(name: "model", value: model, boundary: boundary)
+        if language != "auto" && !language.isEmpty {
+            body.appendMultipartField(name: "language", value: language, boundary: boundary)
+        }
+        body.appendMultipartField(name: "response_format", value: "json", boundary: boundary)
+        body.appendMultipartFileField(
+            name: "file",
+            fileName: "recording.m4a",
+            mimeType: "audio/mp4",
+            fileData: fileData,
+            boundary: boundary
+        )
+        body.appendString("--\(boundary)--\r\n")
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SprechVoxtralError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = Self.extractVoxtralError(from: data)
+            throw SprechVoxtralError.apiError(message ?? "Voxtral API returned status \(httpResponse.statusCode).")
+        }
+
+        do {
+            return try JSONDecoder().decode(TranscriptionPayload.self, from: data)
+        } catch {
+            throw SprechVoxtralError.parsingFailed(error.localizedDescription)
+        }
+    }
+
+    private var currentEngine: TranscriptionEngine {
+        TranscriptionEngine(rawValue: Defaults[.sprechTranscriptionEngine]) ?? .localMLXAudio
+    }
+
+    private func selectedLanguageCode() -> String {
+        switch Defaults[.voxtralLanguage] {
+        case "de":
+            return "de"
+        case "en":
+            return "en"
+        case "fr":
+            return "fr"
+        case "es":
+            return "es"
+        case "it":
+            return "it"
+        default:
+            return "auto"
+        }
+    }
+
+    private func localTranscriptionEndpointURL() -> URL? {
+        let rawBase = Defaults[.sprechLocalEndpoint].trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = rawBase.contains("://") ? rawBase : "http://\(rawBase)"
+        guard var components = URLComponents(string: base), components.scheme != nil else {
+            return nil
+        }
+        if components.path.hasSuffix("/v1/audio/transcriptions") {
+            return components.url
+        }
+        var path = components.path
+        if path.hasSuffix("/") {
+            path.removeLast()
+        }
+        components.path = path + "/v1/audio/transcriptions"
+        return components.url
+    }
+
+    private static func extractVoxtralError(from data: Data) -> String? {
+        if let apiError = try? JSONDecoder().decode(VoxtralErrorPayload.self, from: data) {
+            if let message = apiError.error?.message, !message.isEmpty {
+                return message
+            }
+            if let message = apiError.message, !message.isEmpty {
+                return message
+            }
+        }
+        let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let raw, !raw.isEmpty else { return nil }
+        return raw
+    }
+}
+
+private enum SprechVoxtralError: LocalizedError {
+    case missingAPIKey
+    case invalidEndpoint
+    case recordingFailed(String)
+    case invalidResponse
+    case apiError(String)
+    case parsingFailed(String)
+    case emptyTranscription
+    case localServerUnavailable(String)
+    case localModelMissing
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            return "Missing Voxtral API key."
+        case .invalidEndpoint:
+            return "Invalid transcription endpoint."
+        case .recordingFailed(let reason):
+            return "Recording failed: \(reason)"
+        case .invalidResponse:
+            return "Transcription service returned an invalid response."
+        case .apiError(let message):
+            return message
+        case .parsingFailed(let reason):
+            return "Could not parse transcription response: \(reason)"
+        case .emptyTranscription:
+            return "Transcription result is empty."
+        case .localServerUnavailable(let reason):
+            return "Local AI server unavailable. Start `mlx_audio.server --host 127.0.0.1 --port 8000`. (\(reason))"
+        case .localModelMissing:
+            return "Local AI model is missing. Set it in Settings > Super > Transcription."
+        }
+    }
+}
+
+private enum TranscriptionEngine: String {
+    case localMLXAudio
+    case voxtralAPI
+}
+
+private struct TranscriptionPayload: Decodable {
+    let text: String
+    let language: String?
+}
+
+private struct VoxtralErrorPayload: Decodable {
+    let error: VoxtralInnerError?
+    let message: String?
+}
+
+private struct VoxtralInnerError: Decodable {
+    let message: String?
+}
+
+private extension Data {
+    mutating func appendString(_ value: String) {
+        if let data = value.data(using: .utf8) {
+            append(data)
+        }
+    }
+
+    mutating func appendMultipartField(name: String, value: String, boundary: String) {
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        appendString("\(value)\r\n")
+    }
+
+    mutating func appendMultipartFileField(
+        name: String,
+        fileName: String,
+        mimeType: String,
+        fileData: Data,
+        boundary: String
+    ) {
+        appendString("--\(boundary)\r\n")
+        appendString(
+            "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(fileName)\"\r\n"
+        )
+        appendString("Content-Type: \(mimeType)\r\n\r\n")
+        append(fileData)
+        appendString("\r\n")
     }
 }
 
@@ -2521,11 +3226,15 @@ struct Shortcuts: View {
         Form {
             Section {
                 KeyboardShortcuts.Recorder("Toggle Sneak Peek:", name: .toggleSneakPeek)
+                KeyboardShortcuts.Recorder("Toggle Sprech Recording:", name: .toggleSprechRecording)
+                Defaults.Toggle(key: .sprechFnPushToTalkEnabled) {
+                    Text("Fn/Globe push-to-talk for Sprech")
+                }
             } header: {
                 Text("Media")
             } footer: {
                 Text(
-                    "Sneak Peek shows the media title and artist under the notch for a few seconds."
+                    "Sneak Peek shows the media title and artist under the notch for a few seconds. Fn/Globe push-to-talk starts recording on key press and stops on release."
                 )
                 .multilineTextAlignment(.trailing)
                 .foregroundStyle(.secondary)

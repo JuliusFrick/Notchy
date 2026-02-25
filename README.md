@@ -82,7 +82,16 @@ brew install --cask TheBoredTeam/boring-notch/boring-notch --no-quarantine
 - `CodexBar`: reads local usage data through `codexbar usage --provider codex --format json --json-only`.
 - `AlDente`: companion integration with app detection, quick launch, and charge-limit status readout.
 - `AlDente automation`: optional auto-preset when switching between AC and battery power.
+- `Sprech`: companion integration with app detection and quick launch.
+- `Local transcription`: built-in notch recording workflow against a local MLX Audio server (e.g. Voxtral or Qwen ASR models).
+- `Voxtral`: optional cloud fallback that sends audio to the Voxtral transcription API.
 - `Notch UI`: optional `Super` tab + idle live activity tile when no music is playing.
+
+Local AI quick start:
+```bash
+pip install mlx-audio
+mlx_audio.server --host 127.0.0.1 --port 8000
+```
 
 > [!NOTE]
 > AlDente is integrated as a companion app (launch + status) and not embedded source code.

@@ -15,7 +15,7 @@ struct BoringHeader: View {
     @StateObject var tvm = ShelfStateViewModel.shared
 
     private var shouldShowTabs: Bool {
-        coordinator.alwaysShowTabs || !tvm.isEmpty || Defaults[.showSuperTab]
+        coordinator.alwaysShowTabs || Defaults[.showCalendar] || !tvm.isEmpty || Defaults[.showSuperTab] || Defaults[.showSprechTab]
     }
 
     var body: some View {

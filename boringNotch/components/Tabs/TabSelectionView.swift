@@ -22,8 +22,12 @@ struct TabSelectionView: View {
 
     private var tabs: [TabModel] {
         var result: [TabModel] = [
-            TabModel(label: "Home", icon: "house.fill", view: .home)
+            TabModel(label: "Music", icon: "music.note", view: .home)
         ]
+
+        if Defaults[.showCalendar] {
+            result.append(TabModel(label: "Calendar", icon: "calendar", view: .calendar))
+        }
 
         if Defaults[.boringShelf] {
             result.append(TabModel(label: "Shelf", icon: "tray.fill", view: .shelf))
@@ -31,6 +35,10 @@ struct TabSelectionView: View {
 
         if Defaults[.showSuperTab] {
             result.append(TabModel(label: "Super", icon: "sparkles", view: .superDashboard))
+        }
+
+        if Defaults[.showSprechTab] {
+            result.append(TabModel(label: "Sprech", icon: "waveform", view: .sprech))
         }
 
         return result

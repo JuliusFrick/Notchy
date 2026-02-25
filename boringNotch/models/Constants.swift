@@ -145,9 +145,22 @@ extension Defaults.Keys {
     static let showPowerStatusIcons = Key<Bool>("showPowerStatusIcons", default: true)
     static let showSuperTab = Key<Bool>("showSuperTab", default: true)
     static let showSuperLiveActivityWhenIdle = Key<Bool>("showSuperLiveActivityWhenIdle", default: true)
+    static let showSprechTab = Key<Bool>("showSprechTab", default: true)
     static let superAutoApplyChargePreset = Key<Bool>("superAutoApplyChargePreset", default: false)
     static let superChargeLimitOnAC = Key<Int>("superChargeLimitOnAC", default: 80)
     static let superChargeLimitOnBattery = Key<Int>("superChargeLimitOnBattery", default: 100)
+    static let sprechTranscriptionEngine = Key<String>("sprechTranscriptionEngine", default: "localMLXAudio")
+    static let sprechFnPushToTalkEnabled = Key<Bool>("sprechFnPushToTalkEnabled", default: true)
+    static let sprechLocalEndpoint = Key<String>("sprechLocalEndpoint", default: "http://127.0.0.1:8000")
+    static let sprechLocalModel = Key<String>(
+        "sprechLocalModel",
+        default: "mlx-community/Qwen3-ASR-1.7B-8bit"
+    )
+    static let didMigrateSprechQwenModel = Key<Bool>("didMigrateSprechQwenModel", default: false)
+    static let voxtralAPIKey = Key<String>("voxtralAPIKey", default: "")
+    static let voxtralModel = Key<String>("voxtralModel", default: "voxtral-mini-latest")
+    static let voxtralLanguage = Key<String>("voxtralLanguage", default: "auto")
+    static let voxtralAutoCopy = Key<Bool>("voxtralAutoCopy", default: true)
     
     // MARK: Downloads
     static let enableDownloadListener = Key<Bool>("enableDownloadListener", default: true)

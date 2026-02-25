@@ -65,6 +65,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isScreenLocked: Bool = false
     private var windowScreenDidChangeObserver: Any?
     private var dragDetectors: [String: DragDetector] = [:] // UUID -> DragDetector
+    private let sprechFnPushToTalk = SprechFnPushToTalkController()
+    private var sprechFnPushToTalkCancellable: AnyCancellable?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -81,6 +83,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             screenUnlockedObserver = nil
         }
         MusicManager.shared.destroy()
+        sprechFnPushToTalk.stop()
+        sprechFnPushToTalkCancellable?.cancel()
         cleanupDragDetectors()
         cleanupWindows()
         XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
@@ -408,6 +412,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        KeyboardShortcuts.onKeyDown(for: .toggleSprechRecording) {
+            Task { @MainActor in
+                let service = SprechVoxtralService.shared
+                if service.isRecording {
+                    service.stopRecording()
+                } else {
+                    await service.startRecording()
+                }
+            }
+        }
+
+        sprechFnPushToTalk.startIfNeeded()
+        sprechFnPushToTalkCancellable = Defaults.publisher(.sprechFnPushToTalkEnabled)
+            .sink { [weak self] change in
+                guard let self else { return }
+                if change.newValue {
+                    self.sprechFnPushToTalk.startIfNeeded()
+                } else {
+                    self.sprechFnPushToTalk.stop()
+                }
+            }
+
         if !Defaults[.showOnAllDisplays] {
             let viewModel = self.vm
             let window = createBoringNotchWindow(
@@ -592,6 +618,77 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         onboardingWindowController?.window?.makeKeyAndOrderFront(nil)
         onboardingWindowController?.window?.orderFrontRegardless()
+    }
+}
+
+final class SprechFnPushToTalkController {
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
+    private var functionKeyPressed = false
+    private var startedByFnHold = false
+
+    func startIfNeeded() {
+        guard Defaults[.sprechFnPushToTalkEnabled] else { return }
+        guard globalMonitor == nil, localMonitor == nil else { return }
+
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+            self?.handle(event)
+            return event
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
+            self?.handle(event)
+        }
+    }
+
+    func stop() {
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+        }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+        }
+        globalMonitor = nil
+        localMonitor = nil
+        functionKeyPressed = false
+        startedByFnHold = false
+    }
+
+    private func handle(_ event: NSEvent) {
+        DispatchQueue.main.async { [weak self] in
+            self?.handleOnMain(event)
+        }
+    }
+
+    private func handleOnMain(_ event: NSEvent) {
+        guard event.type == .flagsChanged else { return }
+        guard event.keyCode == 63 else { return } // Fn/Globe
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isPressed = flags.contains(.function)
+        guard isPressed != functionKeyPressed else { return }
+        functionKeyPressed = isPressed
+
+        if isPressed {
+            Task { @MainActor in
+                let service = SprechVoxtralService.shared
+                guard !service.isTranscribing else { return }
+                guard !service.isRecording else {
+                    self.startedByFnHold = false
+                    return
+                }
+                self.startedByFnHold = true
+                await service.startRecording()
+            }
+        } else {
+            Task { @MainActor in
+                guard self.startedByFnHold else { return }
+                self.startedByFnHold = false
+                let service = SprechVoxtralService.shared
+                guard service.isRecording else { return }
+                service.stopRecording()
+            }
+        }
     }
 }
 

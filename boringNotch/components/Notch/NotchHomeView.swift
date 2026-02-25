@@ -227,14 +227,7 @@ struct MusicControlsView: View {
             MusicControlButton.maxSlotCount
         )
         let padded = slotConfig.padded(to: sanitizedLimit, filler: .none)
-        let result = Array(padded.prefix(sanitizedLimit))
-        // If calendar and camera are both visible alongside music, hide the edge slots
-        let shouldHideEdges = Defaults[.showCalendar] && Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
-        if shouldHideEdges && result.count >= 5 {
-            return Array(result.dropFirst().dropLast())
-        }
-
-        return result
+        return Array(padded.prefix(sanitizedLimit))
     }
 
     @ViewBuilder
@@ -421,7 +414,6 @@ struct VolumeControlView: View {
 struct NotchHomeView: View {
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var webcamManager = WebcamManager.shared
-    @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     let albumArtNamespace: Namespace.ID
 
@@ -440,18 +432,8 @@ struct NotchHomeView: View {
     }
 
     private var mainContent: some View {
-        HStack(alignment: .top, spacing: (shouldShowCamera && Defaults[.showCalendar]) ? 10 : 15) {
+        HStack(alignment: .top, spacing: 15) {
             MusicPlayerView(albumArtNamespace: albumArtNamespace)
-
-            if Defaults[.showCalendar] {
-                CalendarView()
-                    .frame(width: shouldShowCamera ? 170 : 215)
-                    .onHover { isHovering in
-                        vm.isHoveringCalendar = isHovering
-                    }
-                    .environmentObject(vm)
-                    .transition(.opacity)
-            }
 
             if shouldShowCamera {
                 CameraPreviewView(webcamManager: webcamManager)
@@ -459,6 +441,54 @@ struct NotchHomeView: View {
                     .opacity(vm.notchState == .closed ? 0 : 1)
                     .blur(radius: vm.notchState == .closed ? 20 : 0)
                     .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.76, blendDuration: 0), value: shouldShowCamera)
+            }
+        }
+        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
+        .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
+}
+
+struct NotchCalendarView: View {
+    @EnvironmentObject var vm: BoringViewModel
+    @ObservedObject var webcamManager = WebcamManager.shared
+    @ObservedObject var coordinator = BoringViewCoordinator.shared
+
+    var body: some View {
+        Group {
+            if !coordinator.firstLaunch {
+                mainContent
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private var shouldShowCamera: Bool {
+        Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
+    }
+
+    private var calendarWidth: CGFloat {
+        shouldShowCamera ? 430 : 540
+    }
+
+    private var mainContent: some View {
+        HStack(alignment: .top, spacing: shouldShowCamera ? 12 : 0) {
+            CalendarView()
+                .frame(width: calendarWidth)
+                .onHover { isHovering in
+                    vm.isHoveringCalendar = isHovering
+                }
+                .environmentObject(vm)
+                .transition(.opacity)
+
+            if shouldShowCamera {
+                CameraPreviewView(webcamManager: webcamManager)
+                    .scaledToFit()
+                    .opacity(vm.notchState == .closed ? 0 : 1)
+                    .blur(radius: vm.notchState == .closed ? 20 : 0)
+                    .animation(
+                        .interactiveSpring(response: 0.32, dampingFraction: 0.76, blendDuration: 0),
+                        value: shouldShowCamera
+                    )
             }
         }
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
